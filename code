@@ -1,0 +1,200 @@
+#Bureau of Labor Website to download file, so called "BLS Data" in code but "Bureau of Labor Statisitcs Data" in PDF File 
+#  URL: https://data.bls.gov/timeseries/LNS14000000
+#  Notes: May data not available at time of writing 1May 26th 2020
+#Google Data downloaded from Google Trends Website using terms "Unemployment", so called "test2" in code but "Google Trends Data" in PDF file
+#  URL: https://trends.google.com/trends/explore?date=2013-03-18%202018-03-18&geo=US&q=unemployment
+#  Notes: Using 5 years previous data, but used dates above so can be repeated more easily
+
+
+#Import librays required
+library(lubridate)
+library(tseries)
+library(xts)
+library(forecast)
+library(readr)
+library(ggplot2)
+
+
+#------ Building BLS Data ------
+
+#Import data in BLS format
+bureauOfLaborData <- read.csv(file = "BLS Data.csv", header=TRUE, skip = 11)
+#head(bureauOfLaborData)
+#str(bureauOfLaborData)
+#View(bureauOfLaborData)
+
+#Reformat table into 2 Cols
+boldc <- data.frame(Date=as.integer(), Rate=as.integer()) #Bureau Of Labor Data Clean
+
+#Convert multi column table into 2 column table 
+for (i in 6:nrow(bureauOfLaborData)){ #Start on row 6 as google data starts 2013
+  for (j in 2:ncol(bureauOfLaborData)){
+    tempRow <- data.frame(as.Date(paste(bureauOfLaborData[i,1],j-1,1,sep = "."), "%Y.%m.%d"),bureauOfLaborData[i,j]) 
+    colnames(tempRow) <- c('Date', 'Rate')
+    boldc <- rbind(boldc, tempRow)
+    tempRow <- NULL
+  }
+}
+#str(boldc)
+#View(boldc)
+
+#------ Building Google Data ------
+
+#fixing date problem
+data <- read.csv("multiTimeline.csv", stringsAsFactors = FALSE, skip=2)
+data$Week <- as.Date(data$Week, "%Y-%m-%d")
+## This will give NA(s) in some locales; setting the C locale
+## as in the commented lines will overcome this on most systems.
+##lct <- Sys.getlocale("LC_TIME"); Sys.setlocale("LC_TIME", "C")
+##x <- c("1jan1960", "2jan1960", "31mar1960", "30jul1960")
+##z <- as.Date(x, "%d%b%Y")
+##Sys.setlocale("LC_TIME", lct)
+
+#Import data form Google
+googletrendsData <- read.csv("multiTimeline.csv", header=TRUE, skip=2)
+
+
+#building Data set
+googletrendsData$Week<-as.Date(googletrendsData$Week, "%Y-%m-%d")
+colnames(googletrendsData)<-c('Date', 'Rate')
+#str(googletrendsData)
+#googletrendsData$Week
+View(googletrendsData)
+
+
+
+#------ Plot BOLDC + Google ------
+#Merged so that colouring works for legend
+graphData <- data.frame(Date=as.Date(seq(as.Date("2017/5/26"), as.Date("2020/5/26"), "days")))
+#graphData[boldc, on c("dates")
+graphData = merge(graphData,boldc,by="Date",all.x=T)
+graphData = merge(graphData,googletrendsData,by="Date",all.x=T)
+colnames(graphData)<-c('Date', 'BoLDRate', 'GoogleRate')
+View(graphData)
+
+
+(plot1 <- ggplot(graphData, aes(Date)) + 
+    geom_point(aes(y = BoLDRate, colour="Bureau of Labor Data")) +
+    geom_point(aes(y = GoogleRate, colour="Google Trend Data")) +
+    ylab("Rate of Searches and [%] of Unemployment in the USA") +
+    scale_fill_discrete(name="Legend") +
+    ggtitle("Comparing Google Searches for Unemployment with the Unemployment Rate in the USA")
+)
+
+
+##------ Test Correlation -------
+  
+  #Create data set of equal length
+dataComb <- boldc
+colnames(dataComb) <- c("Date", "BoLDData")
+dataComb$GoogleData <- 0
+str(dataComb)
+#Add average of google data for month
+for (i in 1:nrow(dataComb)){
+  numbWeeks <- 0
+  sumWeeks <- 0
+  for (j in 1:nrow(googletrendsData)){
+    if(substr(googletrendsData[j,1],0,7) == substr(dataComb[i,1],0,7)) {
+      sumWeeks <- sumWeeks + googletrendsData[j,2]
+      numbWeeks <- numbWeeks + 1
+    } # Else do nothing if not same month
+  }
+  if(numbWeeks > 0) {
+    dataComb[i,3] <- sumWeeks / numbWeeks
+  } # Else do nothing to avoid /DIV0 Err
+}
+
+
+#Store next month (May) Google data for use in forcasting later
+nextMonthGoogleData <- data.frame(0)
+nextMonthGoogleData <- dataComb[63,3]
+#nextMonthGoogleData
+
+#Remove rows with NA + Missing Data
+dataComb <- dataComb[-c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 
+                     15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 65,
+                     66, 67, 68, 69, 70, 71, 72),]
+
+
+str(dataComb)
+View(dataComb)
+
+#Test for correlation
+(plot2 <- ggplot(dataComb, aes(BoLDData, GoogleData)) +
+    geom_point() + 
+    geom_smooth(method=lm, se=FALSE) +
+    theme_minimal() +
+    xlab("Bureau of Labor Data") +
+    ylab("Google Searches for Unemployment") +
+    ggtitle("Visualizing Correlation of Google Searches for Unemployment with the Unemployment Rate in the USA")
+)
+cor.test(dataComb$GoogleData, dataComb$BoLDData)
+
+
+#Testing for Normality
+#Bureau of Labor Data
+ggplot(dataComb, aes(x = BoLDData)) + 
+  geom_histogram(binwidth = 0.5, colour = "black", fill = "red") 
+
+shapiro.test(dataComb$BoLDData)
+
+#Google Data
+ggplot(dataComb, aes(x = GoogleData)) + 
+  geom_histogram(binwidth = 0.5, colour = "black", fill = "blue") 
+
+shapiro.test(dataComb$GoogleData)
+
+
+#Kendall's Tau used because Google data appears to deviate from normality
+cor.test(dataComb$BoLDData , dataComb$GoogleData , method = "kendall")
+# z = 7.4172, p-value = 1.196e-13
+# alternative hypothesis: true tau is not equal to 0
+# sample estimates:
+#  tau 
+# 0.6700366 
+
+#------ Forcast using ARIMA ------
+# W5, s66+
+#BoLD for dataComb Period
+kpss.test(dataComb$BoLDData)
+# KPSS Level = 2.8889, Truncation lag parameter = 1, p-value = 0.01
+
+auto.arima(ts(dataComb$BoLDData)) -> autoArimaModel
+
+
+auto.arima(dataComb$BoLDData)
+# Series: dataComb$BoLDData 
+# ARIMA(2,1,2) with drift 
+# Coefficients:
+#  ar1      ar2      ma1     ma2    drift
+# 0.7902  -0.7283  -1.1470  0.7918  -0.0592
+# s.e.  0.1677   0.1549   0.2198  0.1138   0.0100
+# sigma^2 estimated as 0.01369:  log likelihood=44.97
+# AIC=-77.93   AICc=-76.32   BIC=-65.47
+
+plot(forecast(autoArimaModel,h=20))
+
+baseFit <- Arima(dataComb$BoLDData,order=c(2,1,2))
+
+inSampleBaseFitMAE <- mean(abs(baseFit$residuals))
+inSampleBaseFitMAE
+# [1] 0.1045147
+
+#Advanced xreg Model
+advancedFit <- Arima(dataComb$BoLDData,order=c(2,1,2),xreg=dataComb$GoogleData)
+advArimaModel <- auto.arima(dataComb$BoLDData,xreg=dataComb$GoogleData)
+plot(forecast(advArimaModel, h=1, xreg=nextMonthGoogleData))
+
+inSampleAdvancedFitMAE <- mean(abs(advancedFit$residuals))
+inSampleAdvancedFitMAE
+# [1] 0.1043503
+
+inSampleAdvancedFitMAE/inSampleBaseFitMAE
+# [1] 0.9984269
+
+wilcox.test(abs(baseFit$residuals),abs(advancedFit$residuals),paired = TRUE)
+
+# data:  abs(baseFit$residuals) and abs(advancedFit$residuals)
+# V = 929, p-value = 0.9208
+# alternative hypothesis: true location shift is not equal to 0
+
